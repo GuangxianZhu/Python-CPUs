@@ -393,26 +393,34 @@ class App:
             c.create_text((x0 + x1) / 2, y0 + 12, text=title, font=self.f_bold, fill=INK)
 
         # PC
-        box(20, 12, 110, 62, "PC", hot=(ph == 0))
+        box(20, 12, 110, 62, "PC（书签）", hot=(ph == 0))
         pc_show = t["pc"] if t else self.cpu.pc
-        c.create_text(65, 44, text=str(pc_show), font=self.f_mono_big, fill=INK)
-        wire((65, 62, 65, 88), "pc", (0,), "地址", (70, 76))
+        c.create_text(65, 44, text="第 {} 行".format(pc_show), font=self.f_bold, fill=ACTIVE if ph == 0 else INK)
+        wire((65, 62, 65, 88), "pc", (0,), "去找第 {} 行".format(pc_show), (70, 76))
 
         # 程序存储器
         box(20, 88, 220, 318, "程序存储器", hot=(ph == 0))
         prog = self.cpu.program
-        start = max(0, min(pc_show - 4, len(prog) - 11))
-        for k, (code, text) in enumerate(prog[start:start + 11]):
+        for xh, head in ((26, "行"), (48, "机器码"), (98, "汇编")):
+            c.create_text(xh, 117, anchor="w", text=head, font=self.f_small, fill=MUTED)
+        start = max(0, min(pc_show - 4, len(prog) - 10))
+        for k, (code, text) in enumerate(prog[start:start + 10]):
             addr = start + k
-            y = 118 + k * 18
+            y = 135 + k * 18
             cur = addr == pc_show
             if cur:
                 c.create_rectangle(24, y - 9, 216, y + 9, fill="#fff4e6", outline="")
-            c.create_text(28, y, anchor="w", font=self.f_mono, fill=INK if cur else MUTED,
-                          text="{:2d} {:04X} {}".format(addr, code, text))
+            col = (ACTIVE if ph == 0 else INK) if cur else MUTED
+            c.create_text(42, y, anchor="e", font=self.f_mono, fill=col, text=str(addr))
+            c.create_text(48, y, anchor="w", font=self.f_bold if cur else self.f_mono, fill=col,
+                          text="{:04X}".format(code))
+            c.create_text(98, y, anchor="w", font=self.f_mono, fill=INK if cur else MUTED, text=text)
         if not prog:
             c.create_text(120, 200, text="（空）", fill=MUTED)
         wire((220, 110, 236, 110, 236, 34, 252, 34), "fetch", (0,))
+        if t:
+            c.create_text(231, 72, anchor="e", text="取出第 {} 行".format(t["pc"]), font=self.f_small,
+                          fill=ACTIVE if ph == 0 else MUTED)
 
         # 指令
         x0 = 252
@@ -425,14 +433,25 @@ class App:
             c.create_rectangle(x, 16, x + 36, 50, fill=col if t else "#f1f3f5", outline="white")
             if t:
                 c.create_text(x + 18, 33, text=str((code >> bit) & 1), fill="white", font=self.f_mono_big)
-            c.create_text(x + 18, 8, text=str(bit), fill=MUTED, font=self.f_small)
+                if self.detail_var.get():
+                    c.create_text(x + 3, 22, anchor="w", text=str(bit), fill="white", font=self.f_small)
+        # 每 4 格合起来就是一位十六进制数
+        for g in range(4):
+            gx = x0 + g * 152
+            cx = gx + 75
+            c.create_line(gx + 2, 8, gx + 2, 13, gx + 148, 13, gx + 148, 8, fill="#adb5bd")
+            c.create_rectangle(cx - 10, 2, cx + 10, 16, fill=BOX, outline="")
+            if t:
+                c.create_text(cx, 8, text="{:X}".format((code >> (12 - 4 * g)) & 0xF), font=self.f_bold,
+                              fill=ACTIVE if ph == 0 else INK)
         for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
                                       ("第一个数", "A", 9, 11), ("第二个数 / 数字", "B", 12, 15)):
             xm = x0 + (lo_i + hi_i + 1) * 19
             c.create_text(xm, 60, text=name, fill=FIELD_COLORS[key], font=self.f_small)
         if t:
-            c.create_text(x0 + 16 * 38 + 6, 33, anchor="w", font=self.f_mono_big, fill=INK,
-                          text="{:04X}".format(code))
+            c.create_text(x0 + 16 * 38 + 4, 30, anchor="w", font=self.f_bold, fill=ACTIVE if ph == 0 else INK,
+                          text="={:04X}".format(code))
+            c.create_text(x0 + 16 * 38 + 4, 48, anchor="w", font=self.f_small, fill=MUTED, text="十六进制")
 
         f = t["fields"] if t else None
         ctrl = t["ctrl"] if t else None
