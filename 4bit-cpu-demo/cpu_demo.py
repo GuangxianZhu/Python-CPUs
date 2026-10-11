@@ -39,6 +39,27 @@ def pad(text, width=14):
     return text + " " * max(1, width - w)
 
 
+class WrapText(tk.Text):
+    """只读的多行说明。中文没有空格，用 Label 换行会在奇怪的地方断开，所以用按字换行的 Text。"""
+
+    def __init__(self, master, height, fg, font="TkDefaultFont"):
+        super().__init__(master, height=height, wrap="char", bg=BG, fg=fg, font=font, relief="flat",
+                         highlightthickness=0, borderwidth=0, cursor="arrow")
+        self.config(state="disabled")
+
+    def config(self, cnf=None, **kw):
+        text = kw.pop("text", None)
+        if kw or cnf:
+            super().config(cnf, **kw)
+        if text is not None:
+            super().config(state="normal")
+            self.delete("1.0", "end")
+            self.insert("1.0", text)
+            super().config(state="disabled")
+
+    configure = config
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -84,11 +105,9 @@ class App:
                                 highlightbackground="#ced4da")
         self.canvas.pack()
 
-        self.phase_label = tk.Label(left, text="", bg=BG, fg=INK, justify="left", anchor="w",
-                                    wraplength=CW, height=3)
+        self.phase_label = WrapText(left, height=3, fg=INK)
         self.phase_label.pack(fill="x", pady=(6, 0))
-        self.detail_label = tk.Label(left, text="", bg=BG, fg=MUTED, justify="left", anchor="w",
-                                     wraplength=CW, font=self.f_small)
+        self.detail_label = WrapText(left, height=2, fg=MUTED, font=self.f_small)
         self.detail_label.pack(fill="x", pady=(0, 4))
 
         bar = tk.Frame(left, bg=BG)
@@ -445,7 +464,7 @@ class App:
                 c.create_text(cx, 8, text="{:X}".format((code >> (12 - 4 * g)) & 0xF), font=self.f_bold,
                               fill=ACTIVE if ph == 0 else INK)
         for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
-                                      ("第一个数", "A", 9, 11), ("第二个数 / 数字", "B", 12, 15)):
+                                      ("数1 从哪拿", "A", 9, 11), ("数2 从哪拿 / 数字", "B", 12, 15)):
             xm = x0 + (lo_i + hi_i + 1) * 19
             c.create_text(xm, 60, text=name, fill=FIELD_COLORS[key], font=self.f_small)
         if t:
@@ -486,94 +505,101 @@ class App:
                 c.create_text(262, y + 15, anchor="w", text=txt, font=self.f_small, fill=MUTED)
 
         # 寄存器堆
-        RX0, RX1 = 450, 600
+        RX0, RX1 = 450, 650
         box(RX0, 100, RX1, 420, "小盒子（寄存器）", hot=(ph in (2, 4) and t is not None and (u["A"] or u["D"])))
+        detail = self.detail_var.get()
+        for xh, head in ((RX0 + 10, "盒子"), (RX0 + 72, "之前"), (RX0 + 122, "之后")):
+            c.create_text(xh, 132, anchor="center" if xh > RX0 + 10 else "w", text=head, font=self.f_small,
+                          fill=MUTED)
+        written = t is not None and ph == 4 and u["D"]
         for i in range(8):
-            y = 138 + i * 33
-            fill = BOX
-            note = ""
+            y = 154 + i * 32
+            before = t["old_value"] if written and i == f["D"] else regs[i]
+            fill, chip, chip_col = BOX, "", INK
             if t and ph >= 2:
-                if i == f["A"] and u["A"]:
-                    fill = "#ebfbee"
-                if i == f["B"] and u["B"]:
-                    fill = "#f3f0ff" if fill == BOX else "#e6fcf5"
-            if t and ph == 4 and u["D"] and i == f["D"]:
-                fill = "#e7f5ff"
-                if t["old_value"] != regs[i]:
-                    note = "←{}".format(t["old_value"])
-            c.create_rectangle(RX0 + 8, y - 13, RX1 - 8, y + 13, fill=fill, outline="#dee2e6")
-            c.create_text(RX0 + 16, y, anchor="w", text="R{}".format(i), font=self.f_bold, fill=INK)
-            c.create_text(RX0 + 52, y, anchor="w", text=bits(regs[i]), font=self.f_mono_big, fill=INK)
-            c.create_text(RX0 + 108, y, anchor="w", text=str(regs[i]) + note, font=self.f_mono, fill=INK)
-            tags = []
-            if t and ph >= 2 and i == f["A"]:
-                tags.append(("A", FIELD_COLORS["A"]))
-            if t and ph >= 2 and i == f["B"]:
-                tags.append(("B", FIELD_COLORS["B"]))
-            if t and ph >= 4 and i == f["D"] and u["D"]:
-                tags.append(("D", FIELD_COLORS["D"]))
-            for k, (tg, col) in enumerate(tags):
-                c.create_text(RX1 - 14 - k * 12, y, text=tg, fill=col, font=self.f_bold)
+                roles = [n for n, key in (("数1", "A"), ("数2", "B")) if i == f[key] and u[key]]
+                if roles:
+                    chip = "→" + "、".join(roles)
+                    chip_col = FIELD_COLORS["A"] if roles[0] == "数1" else FIELD_COLORS["B"]
+                    fill = "#ebfbee" if roles[0] == "数1" else "#f3f0ff"
+            if written and i == f["D"]:
+                fill, chip, chip_col = "#e7f5ff", "←存入", FIELD_COLORS["D"]
+            show = (lambda v: bits(v)) if detail else str
+            c.create_rectangle(RX0 + 6, y - 13, RX1 - 6, y + 13, fill=fill, outline="#dee2e6")
+            c.create_text(RX0 + 10, y, anchor="w", text="R{}".format(i), font=self.f_bold, fill=INK)
+            c.create_text(RX0 + 72, y, anchor="center", text=show(before), font=self.f_mono_big, fill=INK)
+            if t and ph == 4:
+                changed = written and i == f["D"] and before != regs[i]
+                c.create_text(RX0 + 122, y, anchor="center", text=show(regs[i]),
+                              font=self.f_mono_big, fill=ACTIVE if changed else INK)
+            else:
+                c.create_text(RX0 + 122, y, anchor="center", text="…", font=self.f_mono, fill=MUTED)
+            if chip:
+                c.create_text(RX1 - 9, y, anchor="e", text=chip, font=self.f_small, fill=chip_col)
+        if t and ph == 4:
+            c.create_text((RX0 + RX1) / 2, 410, text="“之后”是时钟咔哒一响以后的值" if u["D"] else "这次没有盒子变化",
+                          font=self.f_small, fill=MUTED)
 
         # 地址线
         wire((x0 + 6.5 * 38, 68, x0 + 6.5 * 38, 100), "D", (4,), f and "R{}".format(f["D"]), (x0 + 6.5 * 38 + 4, 82))
         ax = x0 + 10.5 * 38
-        wire((ax, 68, ax, 76, 545, 76, 545, 100), "A", (2,), f and "R{}".format(f["A"]), (ax + 4, 72))
+        wire((ax, 68, ax, 76, 560, 76, 560, 100), "A", (2,), f and "R{}".format(f["A"]), (ax + 4, 72))
         bx = x0 + 14.5 * 38
-        wire((bx, 68, bx, 88, 580, 88, 580, 100), "B", (2,), f and "R{}".format(f["B"]), (bx + 4, 80))
+        wire((bx, 68, bx, 88, 600, 88, 600, 100), "B", (2,), f and "R{}".format(f["B"]), (bx + 4, 80))
 
         # ALU
-        AX0, AX1 = 660, 770
+        AX0, AX1 = 685, 785
         a_val = t["a_val"] if t else 0
         b_val = t["b_val"] if t else 0
-        wire((RX1, 200, AX0, 200), "alu", (2, 3), t and "A={}".format(a_val), (RX1 + 6, 192))
-        wire((RX1, 330, AX0, 330), "alu", (2, 3), t and "B={}".format(b_val), (RX1 + 6, 322))
         hot_alu = t is not None and ph == 3
         c.create_polygon(AX0, 160, AX1, 205, AX1, 325, AX0, 370, AX0, 285, AX0 + 18, 265, AX0, 245,
                          fill=BOX, outline=ACTIVE if hot_alu else "#868e96", width=3 if hot_alu else 1.5)
-        c.create_text(AX0 + 50, 180, text="计算器", font=self.f_bold, fill=INK)
+        wire((RX1, 200, AX0, 200), "alu", (2, 3), t and "数1={}".format(a_val), (RX1 + 3, 190))
+        wire((RX1, 330, AX0, 330), "alu", (2, 3), t and "数2={}".format(b_val), (RX1 + 3, 320))
+        c.create_text(AX0 + 48, 180, text="计算器", font=self.f_bold, fill=INK)
         if t and ph >= 3:
             al = t["alu"]
             names = ["异或", "与", "或", "减" if al["sub"] else "加"]
             for k in range(4):
                 y = 222 + k * 22
                 sel = k == al["afs"] and u["alu"]
-                c.create_text(AX0 + 32, y, anchor="w", font=self.f_bold if sel else self.f_small,
+                c.create_text(AX0 + 30, y, anchor="w", font=self.f_bold if sel else self.f_small,
                               fill=ACTIVE if sel else MUTED,
                               text="{} {}".format(names[k], al["candidates"][k]))
         if t and ph >= 1:
-            c.create_text(AX0 + 50, 388, text="做：" + alu_op_cn(ctrl) if u["alu"] else "这次用不上",
+            c.create_text(AX0 + 48, 388, text="做：" + alu_op_cn(ctrl) if u["alu"] else "这次用不上",
                           font=self.f_small, fill=ACTIVE if ph == 1 and u["alu"] else MUTED)
 
-        # 写回选择器
-        MX0, MX1 = 830, 870
+        # 写回选择器（岔路口）
+        MX0, MX1 = 830, 892
         hot_mux = t is not None and ph == 4
-        c.create_polygon(MX0, 150, MX1, 175, MX1, 355, MX0, 380, fill=BOX,
+        c.create_polygon(MX0, 150, MX1, 172, MX1, 358, MX0, 380, fill=BOX,
                          outline=ACTIVE if hot_mux else "#868e96", width=3 if hot_mux else 1.5)
-        c.create_text(850, 140, text="岔路口：存哪个", font=self.f_small, fill=INK)
-        if t and ph >= 1 and ctrl["WE"]:
-            c.create_text(850, 394, text=["选数字", "选计算结果", "选盒子", "选盒子"][ctrl["RSS"]],
-                          font=self.f_small, fill=ACTIVE if ph == 1 else MUTED)
-        ins_y = [190, 250, 310, 350]
+        c.create_text(861, 140, text="岔路口", font=self.f_bold, fill=INK)
         rss = ctrl["RSS"] if t else -1
-        for k, y in enumerate(ins_y):
-            c.create_text(MX0 + 12, y, text="数算盒盒"[k], font=self.f_small,
-                          fill=ACTIVE if (t and ph == 4 and k == rss) else MUTED)
+        if t and ph >= 1:
+            say = ("听领班的：\n存" + ["数字", "计算结果", "盒子的数", "盒子的数"][rss]) if ctrl["WE"] else "领班说：不存"
+            c.create_text(900, 400, anchor="e", justify="right", text=say, font=self.f_small,
+                          fill=ACTIVE if ph in (1, 4) and ctrl["WE"] else MUTED)
+        for k, (y, name) in enumerate(zip([190, 250, 310, 350], ["数字", "计算结果", "盒子的数", "盒子的数"])):
+            on = t is not None and ph == 4 and k == rss and ctrl["WE"]
+            c.create_text(MX0 + 4, y, anchor="w", text=name, font=self.f_small,
+                          fill=ACTIVE if on else MUTED)
         # 输入 0：Data（立即数）
         dx = x0 + 15.5 * 38
-        wire((dx, 68, dx, 128, 800, 128, 800, 190, MX0, 190), "data", (2, 4),
+        wire((dx, 68, dx, 128, 805, 128, 805, 190, MX0, 190), "data", (2, 4),
              f and "数字 {}".format(f["Data"]), (dx + 4, 112))
         # 输入 1：ALU 结果
-        wire((AX1, 265, 800, 265, 800, 250, MX0, 250), "alu", (3, 4) if rss == 1 else (3,),
-             t and str(t["alu"]["result"]), (AX1 + 4, 257))
+        wire((AX1, 265, 805, 265, 805, 250, MX0, 250), "alu", (3, 4) if rss == 1 else (3,),
+             t and str(t["alu"]["result"]), (AX1 + 3, 257))
         # 输入 2、3：寄存器 A
-        wire((625, 200, 625, 400, 805, 400, 805, 310, MX0, 310), "A2", (2, 4),
-             t and "A={}".format(a_val), (630, 392))
-        wire((805, 350, MX0, 350), "_", (2,))
+        wire((668, 200, 668, 400, 812, 400, 812, 310, MX0, 310), "A2", (2, 4),
+             t and "数1={}".format(a_val), (672, 392))
+        wire((812, 350, MX0, 350), "_", (2,))
         # 输出 → 写端口
         wd = t["write_data"] if t else 0
-        wire((MX1, 265, 900, 265, 900, 452, 525, 452, 525, 420), "D", (4,),
-             t and "存入 {}".format(wd), (690, 444))
+        wire((MX1, 265, 910, 265, 910, 452, 540, 452, 540, 420), "D", (4,),
+             t and "存入 {}".format(wd), (700, 444))
 
         # 显示器
         box(20, 340, 400, 456, "屏幕", hot=(t is not None and ph == 4 and u["disp"]))
@@ -675,7 +701,7 @@ class App:
                 cv.create_text(x + 20, 42, text=str((code >> bit) & 1), fill="white", font=self.f_mono_big)
                 cv.create_text(x + 20, 12, text=str(bit), fill=MUTED, font=self.f_small)
             for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
-                                          ("第一个数", "A", 9, 11), ("第二个数 / 数字", "B", 12, 15)):
+                                          ("数1 从哪拿", "A", 9, 11), ("数2 从哪拿 / 数字", "B", 12, 15)):
                 cv.create_text(10 + (lo_i + hi_i + 1) * 21, 76, text=name, fill=FIELD_COLORS[key],
                                font=self.f_small)
             f = split_fields(code)
