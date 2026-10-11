@@ -11,7 +11,8 @@ import re
 from cpu_core import (AFS_NAMES, CPU, EXAMPLE_PROGRAM, AsmError, alu, assemble,
                       assemble_line, bits, control_signals, disassemble, display_char,
                       split_fields, MNEMONIC)
-from lessons import CHAPTERS, PHASE_NAMES, describe_phase, make_prediction, uses
+from lessons import (CHAPTERS, OP_CN, PHASE_NAMES, alu_op_cn, describe_detail, describe_phase,
+                     make_prediction, meaning, uses)
 
 # 颜色
 ACTIVE = "#e8590c"      # 这一步正在用的通路
@@ -85,7 +86,10 @@ class App:
 
         self.phase_label = tk.Label(left, text="", bg=BG, fg=INK, justify="left", anchor="w",
                                     wraplength=CW, height=3)
-        self.phase_label.pack(fill="x", pady=(6, 4))
+        self.phase_label.pack(fill="x", pady=(6, 0))
+        self.detail_label = tk.Label(left, text="", bg=BG, fg=MUTED, justify="left", anchor="w",
+                                     wraplength=CW, font=self.f_small)
+        self.detail_label.pack(fill="x", pady=(0, 4))
 
         bar = tk.Frame(left, bg=BG)
         bar.pack(fill="x")
@@ -98,10 +102,10 @@ class App:
         ttk.Button(bar, text="重置", command=self.reset).pack(side="left", padx=4)
         ttk.Button(bar, text="编辑程序…", command=self.open_editor).pack(side="left")
         self.predict_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(bar, text="执行前先让我预测", variable=self.predict_var).pack(side="left", padx=12)
-        self.legend = tk.Label(bar, bg=BG, fg=MUTED, font=self.f_small,
-                               text="橙色＝这一步在用   浅橙＝刚才用过   灰色＝有值但没人用")
-        self.legend.pack(side="right")
+        ttk.Checkbutton(bar, text="执行前先让我预测", variable=self.predict_var).pack(side="left", padx=(12, 4))
+        self.detail_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(bar, text="显示电路细节", variable=self.detail_var,
+                        command=lambda: self.redraw()).pack(side="left")
 
         # 执行前预测
         self.pred_frame = tk.LabelFrame(left, text=" 先猜一猜 ", bg=BG, fg=INK, padx=8, pady=4)
@@ -422,9 +426,10 @@ class App:
             if t:
                 c.create_text(x + 18, 33, text=str((code >> bit) & 1), fill="white", font=self.f_mono_big)
             c.create_text(x + 18, 8, text=str(bit), fill=MUTED, font=self.f_small)
-        for name, lo_i, hi_i in (("opcode", 0, 3), ("D", 5, 7), ("A", 9, 11), ("B / Data", 12, 15)):
+        for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
+                                      ("第一个数", "A", 9, 11), ("第二个数 / 数字", "B", 12, 15)):
             xm = x0 + (lo_i + hi_i + 1) * 19
-            c.create_text(xm, 60, text=name, fill=FIELD_COLORS.get(name.split()[0], INK), font=self.f_small)
+            c.create_text(xm, 60, text=name, fill=FIELD_COLORS[key], font=self.f_small)
         if t:
             c.create_text(x0 + 16 * 38 + 6, 33, anchor="w", font=self.f_mono_big, fill=INK,
                           text="{:04X}".format(code))
@@ -434,26 +439,36 @@ class App:
 
         # 译码器
         wire((328, 68, 328, 100), "op", (1,), f and bits(f["opcode"]), (333, 84))
-        box(252, 100, 400, 140, "指令译码器", hot=(ph == 1))
-        c.create_text(326, 130, text=f and MNEMONIC.get(f["opcode"], "未定义") or "", font=self.f_small,
-                      fill=MUTED)
-        box(252, 150, 400, 318, "控制信号", hot=(ph == 1))
+        box(252, 100, 400, 140, "译码器（领班）", hot=(ph == 1))
+        if t and ph >= 1:
+            c.create_text(326, 130, text=OP_CN.get(MNEMONIC.get(f["opcode"]), "看不懂"), font=self.f_small,
+                          fill=MUTED)
+        box(252, 150, 400, 318, "领班的指示", hot=(ph == 1))
         wire((326, 140, 326, 150), "op", (1,), arrow=False)
-        sigs = [("WE", "写寄存器"), ("DWE", "显示"), ("RSS", "写回选"), ("AFS", "ALU 做"), ("SUB", "减法")]
-        for k, (s, desc) in enumerate(sigs):
-            y = 180 + k * 27
-            val = ""
+        rows = [("存进盒子？", "WE"), ("上屏幕？", "DWE"), ("存哪个？", "RSS"), ("计算器做", "AFS")]
+        for k, (label, key) in enumerate(rows):
+            y = 182 + k * 34
+            val, hot = "", False
             if t and ph >= 1:
-                v = ctrl[s]
-                val = bits(v, 2) if s in ("RSS", "AFS") else str(v)
-            hot = t is not None and ph >= 1 and ctrl[s] != 0
-            c.create_text(262, y, anchor="w", text=s, font=self.f_mono_big, fill=ACTIVE if hot else INK)
-            c.create_text(312, y, anchor="w", text=val, font=self.f_mono_big, fill=ACTIVE if hot else INK)
-            c.create_text(345, y, anchor="w", text=desc, font=self.f_small, fill=MUTED)
+                if key in ("WE", "DWE"):
+                    val, hot = ("要", True) if ctrl[key] else ("不要", False)
+                elif key == "RSS":
+                    val = ["数字", "计算结果", "盒子里的数", "盒子里的数"][ctrl["RSS"]] if ctrl["WE"] else "—"
+                    hot = bool(ctrl["WE"])
+                else:
+                    val = alu_op_cn(ctrl) if u["alu"] else "—"
+                    hot = u["alu"]
+            c.create_text(262, y, anchor="w", text=label, font=self.f_small, fill=INK)
+            c.create_text(334, y, anchor="w", text=val, font=self.f_bold, fill=ACTIVE if hot else MUTED)
+            if self.detail_var.get() and t and ph >= 1:
+                txt = "{}={}".format(key, bits(ctrl[key], 2) if key in ("RSS", "AFS") else ctrl[key])
+                if key == "AFS":
+                    txt += " SUB={}".format(ctrl["SUB"])
+                c.create_text(262, y + 15, anchor="w", text=txt, font=self.f_small, fill=MUTED)
 
         # 寄存器堆
         RX0, RX1 = 450, 600
-        box(RX0, 100, RX1, 420, "寄存器堆", hot=(ph in (2, 4) and t is not None and (u["A"] or u["D"])))
+        box(RX0, 100, RX1, 420, "小盒子（寄存器）", hot=(ph in (2, 4) and t is not None and (u["A"] or u["D"])))
         for i in range(8):
             y = 138 + i * 33
             fill = BOX
@@ -482,11 +497,11 @@ class App:
                 c.create_text(RX1 - 14 - k * 12, y, text=tg, fill=col, font=self.f_bold)
 
         # 地址线
-        wire((x0 + 6.5 * 38, 68, x0 + 6.5 * 38, 100), "D", (4,), f and "D={}".format(f["D"]), (x0 + 6.5 * 38 + 4, 82))
+        wire((x0 + 6.5 * 38, 68, x0 + 6.5 * 38, 100), "D", (4,), f and "R{}".format(f["D"]), (x0 + 6.5 * 38 + 4, 82))
         ax = x0 + 10.5 * 38
-        wire((ax, 68, ax, 76, 545, 76, 545, 100), "A", (2,), f and "A={}".format(f["A"]), (ax + 4, 72))
+        wire((ax, 68, ax, 76, 545, 76, 545, 100), "A", (2,), f and "R{}".format(f["A"]), (ax + 4, 72))
         bx = x0 + 14.5 * 38
-        wire((bx, 68, bx, 88, 580, 88, 580, 100), "B", (2,), f and "B={}".format(f["B"]), (bx + 4, 80))
+        wire((bx, 68, bx, 88, 580, 88, 580, 100), "B", (2,), f and "R{}".format(f["B"]), (bx + 4, 80))
 
         # ALU
         AX0, AX1 = 660, 770
@@ -497,10 +512,10 @@ class App:
         hot_alu = t is not None and ph == 3
         c.create_polygon(AX0, 160, AX1, 205, AX1, 325, AX0, 370, AX0, 285, AX0 + 18, 265, AX0, 245,
                          fill=BOX, outline=ACTIVE if hot_alu else "#868e96", width=3 if hot_alu else 1.5)
-        c.create_text(AX0 + 50, 180, text="ALU", font=self.f_bold, fill=INK)
+        c.create_text(AX0 + 50, 180, text="计算器", font=self.f_bold, fill=INK)
         if t and ph >= 3:
             al = t["alu"]
-            names = ["XOR", "AND", "OR", "SUB" if al["sub"] else "ADD"]
+            names = ["异或", "与", "或", "减" if al["sub"] else "加"]
             for k in range(4):
                 y = 222 + k * 22
                 sel = k == al["afs"] and u["alu"]
@@ -508,27 +523,27 @@ class App:
                               fill=ACTIVE if sel else MUTED,
                               text="{} {}".format(names[k], al["candidates"][k]))
         if t and ph >= 1:
-            c.create_text(AX0 + 50, 388, text="AFS={} SUB={}".format(bits(ctrl["AFS"], 2), ctrl["SUB"]),
-                          font=self.f_small, fill=ACTIVE if ph == 1 else MUTED)
+            c.create_text(AX0 + 50, 388, text="做：" + alu_op_cn(ctrl) if u["alu"] else "这次用不上",
+                          font=self.f_small, fill=ACTIVE if ph == 1 and u["alu"] else MUTED)
 
         # 写回选择器
         MX0, MX1 = 830, 870
         hot_mux = t is not None and ph == 4
         c.create_polygon(MX0, 150, MX1, 175, MX1, 355, MX0, 380, fill=BOX,
                          outline=ACTIVE if hot_mux else "#868e96", width=3 if hot_mux else 1.5)
-        c.create_text(850, 140, text="写回选择", font=self.f_small, fill=INK)
-        if t and ph >= 1:
-            c.create_text(850, 394, text="RSS={}".format(bits(ctrl["RSS"], 2)), font=self.f_small,
-                          fill=ACTIVE if ph == 1 else MUTED)
+        c.create_text(850, 140, text="岔路口：存哪个", font=self.f_small, fill=INK)
+        if t and ph >= 1 and ctrl["WE"]:
+            c.create_text(850, 394, text=["选数字", "选计算结果", "选盒子", "选盒子"][ctrl["RSS"]],
+                          font=self.f_small, fill=ACTIVE if ph == 1 else MUTED)
         ins_y = [190, 250, 310, 350]
         rss = ctrl["RSS"] if t else -1
         for k, y in enumerate(ins_y):
-            c.create_text(MX0 + 8, y, text=str(k), font=self.f_small,
+            c.create_text(MX0 + 12, y, text="数算盒盒"[k], font=self.f_small,
                           fill=ACTIVE if (t and ph == 4 and k == rss) else MUTED)
         # 输入 0：Data（立即数）
         dx = x0 + 15.5 * 38
         wire((dx, 68, dx, 128, 800, 128, 800, 190, MX0, 190), "data", (2, 4),
-             f and "Data={}".format(f["Data"]), (dx + 4, 112))
+             f and "数字 {}".format(f["Data"]), (dx + 4, 112))
         # 输入 1：ALU 结果
         wire((AX1, 265, 800, 265, 800, 250, MX0, 250), "alu", (3, 4) if rss == 1 else (3,),
              t and str(t["alu"]["result"]), (AX1 + 4, 257))
@@ -539,21 +554,18 @@ class App:
         # 输出 → 写端口
         wd = t["write_data"] if t else 0
         wire((MX1, 265, 900, 265, 900, 452, 525, 452, 525, 420), "D", (4,),
-             t and "写入数据={}".format(wd), (690, 444))
-        if t and ph >= 1:
-            c.create_text(RX0 + 4, 434, anchor="w", text="WE={}".format(ctrl["WE"]), font=self.f_small,
-                          fill=ACTIVE if ph in (1, 4) and ctrl["WE"] else MUTED)
+             t and "存入 {}".format(wd), (690, 444))
 
         # 显示器
-        box(20, 340, 400, 468, "显示器（ASCII 终端）", hot=(t is not None and ph == 4 and u["disp"]))
+        box(20, 340, 400, 456, "屏幕", hot=(t is not None and ph == 4 and u["disp"]))
         txt = "".join(display_char(ch) for ch in self.cpu.display)
         c.create_text(36, 395, anchor="w", text=txt + "▌", font=self.f_mono_big, fill="#2b8a3e")
-        if t and ph >= 1:
-            c.create_text(390, 455, anchor="e", text="DWE={}".format(ctrl["DWE"]), font=self.f_small,
-                          fill=ACTIVE if ph in (1, 4) and ctrl["DWE"] else MUTED)
         wire((RX0, 380, 400, 380), "disp", (2, 4), arrow=True)
         if t and ph >= 2:
-            c.create_text(405, 368, anchor="w", text="A,B", font=self.f_small, fill=MUTED)
+            c.create_text(405, 368, anchor="w", text="拼成字", font=self.f_small, fill=MUTED)
+
+        c.create_text(20, 470, anchor="w", font=self.f_small, fill=MUTED,
+                      text="线的颜色：橙＝这一步在用  浅橙＝刚用过  灰＝有值但没人用")
 
         # 时钟周期计数和阶段条
         for k, nm in enumerate(PHASE_NAMES):
@@ -569,11 +581,14 @@ class App:
                 if self.cpu.halted:
                     msg = "程序执行完了。点“重置”从头再来。"
                 else:
-                    msg = ("准备执行第 {} 条指令：{}。点“下一小步”开始，一条指令拆成 5 小步。"
-                           .format(self.cpu.pc, self.cpu.program[self.cpu.pc][1]))
+                    nxt = self.cpu.preview()
+                    msg = ("下一行是第 {} 行：{}，意思是“{}”。点“下一小步”，看 CPU 分 5 小步把它做完。"
+                           .format(self.cpu.pc, nxt["text"], meaning(nxt)))
                 self.phase_label.config(text=msg)
+                self.detail_label.config(text="")
             else:
                 self.phase_label.config(text=describe_phase(t, ph))
+                self.detail_label.config(text="电路细节：" + describe_detail(t, ph) if self.detail_var.get() else "")
 
     # ─── 小工具窗口 ───
 
@@ -640,12 +655,15 @@ class App:
                 cv.create_rectangle(x, 22, x + 40, 62, fill=FIELD_COLORS[fld], outline="white")
                 cv.create_text(x + 20, 42, text=str((code >> bit) & 1), fill="white", font=self.f_mono_big)
                 cv.create_text(x + 20, 12, text=str(bit), fill=MUTED, font=self.f_small)
-            for name, lo_i, hi_i in (("opcode", 0, 3), ("D", 5, 7), ("A", 9, 11), ("B / Data", 12, 15)):
-                cv.create_text(10 + (lo_i + hi_i + 1) * 21, 76, text=name,
-                               fill=FIELD_COLORS.get(name.split()[0], INK), font=self.f_small)
+            for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
+                                          ("第一个数", "A", 9, 11), ("第二个数 / 数字", "B", 12, 15)):
+                cv.create_text(10 + (lo_i + hi_i + 1) * 21, 76, text=name, fill=FIELD_COLORS[key],
+                               font=self.f_small)
             f = split_fields(code)
             ctl = control_signals(f["opcode"])
+            plain = meaning({"fields": f})
             out.config(fg=INK, text=(
+                "意思是：" + plain + "\n\n"
                 "机器码 0x{:04X}  =  {}\n"
                 "opcode = {} → {}\n"
                 "D = {} (R{})   A = {} (R{})   B = {} (R{})   Data = {} ({})\n"
