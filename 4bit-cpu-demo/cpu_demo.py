@@ -24,6 +24,7 @@ MUTED = "#868e96"
 BG = "#f8f9fa"
 BOX = "#ffffff"
 FIELD_COLORS = {"opcode": "#c92a2a", "D": "#1971c2", "A": "#2f9e44", "B": "#7048e8", "-": "#adb5bd"}
+HEX_FADED = {"opcode": "#e8a3a3", "D": "#8fb8e0", "A": "#97cfa2", "B": "#b8a6f3"}
 FIELD_OF_BIT = {}
 for _b in range(16):
     FIELD_OF_BIT[_b] = ("opcode" if _b >= 12 else "D" if 8 <= _b <= 10 else "A" if 4 <= _b <= 6
@@ -75,6 +76,8 @@ class App:
         self.f_big.configure(size=14, weight="bold")
         self.f_mono = tkfont.nametofont("TkFixedFont").copy()
         self.f_mono.configure(size=10)
+        self.f_mono_bold = self.f_mono.copy()
+        self.f_mono_bold.configure(weight="bold")
         self.f_mono_big = self.f_mono.copy()
         self.f_mono_big.configure(size=12, weight="bold")
 
@@ -431,8 +434,11 @@ class App:
                 c.create_rectangle(24, y - 9, 216, y + 9, fill="#fff4e6", outline="")
             col = (ACTIVE if ph == 0 else INK) if cur else MUTED
             c.create_text(42, y, anchor="e", font=self.f_mono, fill=col, text=str(addr))
-            c.create_text(48, y, anchor="w", font=self.f_bold if cur else self.f_mono, fill=col,
-                          text="{:04X}".format(code))
+            # 4 位十六进制分开画，颜色和上面那排格子一致：做什么 / 存到哪 / 数1 / 数2
+            for k, key in enumerate(("opcode", "D", "A", "B")):
+                c.create_text(48 + k * 11, y, anchor="w", font=self.f_mono_bold,
+                              fill=FIELD_COLORS[key] if (cur or not t) else HEX_FADED[key],
+                              text="{:X}".format((code >> (12 - 4 * k)) & 0xF))
             c.create_text(98, y, anchor="w", font=self.f_mono, fill=INK if cur else MUTED, text=text)
         if not prog:
             c.create_text(120, 200, text="（空）", fill=MUTED)
@@ -462,7 +468,7 @@ class App:
             c.create_rectangle(cx - 10, 2, cx + 10, 16, fill=BOX, outline="")
             if t:
                 c.create_text(cx, 8, text="{:X}".format((code >> (12 - 4 * g)) & 0xF), font=self.f_bold,
-                              fill=ACTIVE if ph == 0 else INK)
+                              fill=FIELD_COLORS[("opcode", "D", "A", "B")[g]])
         for name, key, lo_i, hi_i in (("做什么", "opcode", 0, 3), ("存到哪", "D", 5, 7),
                                       ("数1 从哪拿", "A", 9, 11), ("数2 从哪拿 / 数字", "B", 12, 15)):
             xm = x0 + (lo_i + hi_i + 1) * 19
